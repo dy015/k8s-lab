@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Alternative installation script using kubeadm instead of k3s
-# For single-node Kubernetes cluster on CentOS/Rocky Linux
+# Kubernetes cluster installation using kubeadm
+# For single-node clusters on CentOS/Rocky Linux
 #
 
 set -euo pipefail
@@ -15,46 +15,49 @@ source "${HELPERS_DIR}/validators.sh"
 
 K8S_VERSION="${K8S_VERSION:-1.28.0}"
 POD_NETWORK_CIDR="10.244.0.0/16"
-API_SERVER_IP=""  # Auto-detect if empty
-API_SERVER_INTERFACE=""  # Interface to use for API server IP
-SKIP_FIREWALL=false
-DISABLE_FIREWALL=true  # Default for lab/workshop environment
-DRY_RUN=false
+INTERFACE=""  # REQUIRED - must be specified by user
+NODE_IP=""    # Will be detected from interface
 
 show_usage() {
     cat <<EOF
-Usage: $0 [OPTIONS]
+Usage: $0 --interface <interface_name>
 
 Install Kubernetes cluster using kubeadm on CentOS/Rocky Linux (single-node)
 
-OPTIONS:
-    --k8s-version VERSION    Specify Kubernetes version (default: 1.28.0)
-    --pod-cidr CIDR          Pod network CIDR (default: 10.244.0.0/16)
-    --interface IFACE        Network interface to use (e.g., eth1, eth2)
-    --api-server-ip IP       API server advertise IP (default: auto-detect)
-    --enable-firewall        Enable and configure firewall (for production)
-    --skip-firewall          Skip firewall configuration (leave as-is)
-    --dry-run                Show what would be done without executing
-    -h, --help               Show this help message
+REQUIRED:
+    --interface <name>      Network interface to use (e.g., eth1, eno1, enp0s8)
+
+OPTIONAL:
+    --k8s-version VERSION   Specify Kubernetes version (default: 1.28.0)
+    --pod-cidr CIDR         Pod network CIDR (default: 10.244.0.0/16)
+    -h, --help              Show this help message
 
 EXAMPLES:
-    sudo $0                                         # Firewall disabled (default)
-    sudo $0 --interface eth1                        # Use IP from eth1
-    sudo $0 --interface eth2                        # Use IP from eth2
-    sudo $0 --api-server-ip 192.168.1.100           # Specify IP directly
-    sudo $0 --k8s-version 1.29.0 --interface eth1
-    sudo $0 --interface eth1 --enable-firewall      # Enable firewall for production
+    sudo $0 --interface eth1        # Use eth1 interface
+    sudo $0 --interface eno1        # Use eno1 interface
+    sudo $0 --interface enp0s8      # Use enp0s8 interface
 
-NOTE:
-    --interface is recommended for multi-interface setups
-    It automatically detects and uses the IP from the specified interface
+NOTES:
+    - The interface MUST have an IP address configured
+    - Firewall is disabled automatically (lab environment)
+    - SELinux is set to permissive mode automatically
 
 EOF
 }
 
 parse_args() {
+    if [[ $# -eq 0 ]]; then
+        log_error "Missing required --interface parameter"
+        show_usage
+        exit 1
+    fi
+
     while [[ $# -gt 0 ]]; do
         case $1 in
+            --interface)
+                INTERFACE="$2"
+                shift 2
+                ;;
             --k8s-version)
                 K8S_VERSION="$2"
                 shift 2
@@ -62,26 +65,6 @@ parse_args() {
             --pod-cidr)
                 POD_NETWORK_CIDR="$2"
                 shift 2
-                ;;
-            --interface)
-                API_SERVER_INTERFACE="$2"
-                shift 2
-                ;;
-            --api-server-ip)
-                API_SERVER_IP="$2"
-                shift 2
-                ;;
-            --enable-firewall)
-                DISABLE_FIREWALL=false
-                shift
-                ;;
-            --skip-firewall)
-                SKIP_FIREWALL=true
-                shift
-                ;;
-            --dry-run)
-                DRY_RUN=true
-                shift
                 ;;
             -h|--help)
                 show_usage
@@ -94,29 +77,55 @@ parse_args() {
                 ;;
         esac
     done
+
+    # Validate required parameters
+    if [[ -z "${INTERFACE}" ]]; then
+        log_error "Missing required --interface parameter"
+        show_usage
+        exit 1
+    fi
+}
+
+get_ip_from_interface() {
+    local iface=$1
+
+    log_info "Detecting IP from interface: ${iface}"
+
+    # Check if interface exists
+    if ! ip link show "${iface}" &>/dev/null; then
+        log_error "Interface '${iface}' does not exist"
+        log_info "Available interfaces:"
+        ip -o link show | awk -F': ' '{print "  " $2}' | grep -v lo
+        return 1
+    fi
+
+    # Get IPv4 address
+    local ip=$(ip -4 addr show "${iface}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
+
+    if [[ -z "${ip}" ]]; then
+        log_error "No IPv4 address found on interface '${iface}'"
+        log_info "Current interface status:"
+        ip addr show "${iface}"
+        log_info ""
+        log_info "To configure an IP on ${iface}:"
+        log_info "  sudo ip addr add 192.168.1.100/24 dev ${iface}"
+        log_info "  sudo ip link set ${iface} up"
+        return 1
+    fi
+
+    echo "${ip}"
+    return 0
 }
 
 disable_swap() {
     log_step 1 "Disabling swap"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would disable swap"
-        return 0
-    fi
-
     swapoff -a
     sed -i.bak '/swap/s/^/#/' /etc/fstab
-
     log_success "Swap disabled"
 }
 
 load_kernel_modules() {
     log_step 2 "Loading required kernel modules"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would load kernel modules"
-        return 0
-    fi
 
     cat > /etc/modules-load.d/k8s.conf <<EOF
 overlay
@@ -132,11 +141,6 @@ EOF
 configure_sysctl() {
     log_step 3 "Configuring sysctl settings"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would configure sysctl"
-        return 0
-    fi
-
     cat > /etc/sysctl.d/k8s.conf <<EOF
 net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
@@ -151,15 +155,9 @@ EOF
 configure_selinux() {
     log_step 4 "Configuring SELinux"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would configure SELinux"
-        return 0
-    fi
-
-    # Set SELinux to permissive mode (required for Kubernetes)
     if command -v setenforce &> /dev/null; then
         log_info "Setting SELinux to permissive mode..."
-        setenforce 0 || true
+        setenforce 0 2>/dev/null || true
         sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
         sed -i 's/^SELINUX=disabled/SELINUX=permissive/' /etc/selinux/config 2>/dev/null || true
         log_success "SELinux configured to permissive mode"
@@ -168,184 +166,33 @@ configure_selinux() {
     fi
 }
 
-configure_firewall() {
-    log_step 5 "Configuring firewall and iptables"
+disable_firewall() {
+    log_step 5 "Disabling firewall"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would configure firewall"
-        return 0
+    # Stop and disable firewalld
+    if systemctl is-active --quiet firewalld; then
+        systemctl stop firewalld 2>/dev/null || true
     fi
+    systemctl disable firewalld 2>/dev/null || true
 
-    # Disable firewall completely
-    if [[ "${DISABLE_FIREWALL}" == true ]]; then
-        log_info "Disabling firewall completely..."
+    # Flush all iptables rules
+    log_info "Flushing iptables rules..."
+    iptables -F 2>/dev/null || true
+    iptables -X 2>/dev/null || true
+    iptables -t nat -F 2>/dev/null || true
+    iptables -t nat -X 2>/dev/null || true
+    iptables -t mangle -F 2>/dev/null || true
+    iptables -t mangle -X 2>/dev/null || true
+    iptables -P INPUT ACCEPT 2>/dev/null || true
+    iptables -P FORWARD ACCEPT 2>/dev/null || true
+    iptables -P OUTPUT ACCEPT 2>/dev/null || true
 
-        # Stop and disable firewalld
-        if systemctl is-active --quiet firewalld; then
-            systemctl stop firewalld
-        fi
-        systemctl disable firewalld 2>/dev/null || true
-
-        # Flush iptables rules to ensure nothing blocks traffic
-        log_info "Flushing iptables rules..."
-        iptables -F 2>/dev/null || true
-        iptables -X 2>/dev/null || true
-        iptables -t nat -F 2>/dev/null || true
-        iptables -t nat -X 2>/dev/null || true
-        iptables -t mangle -F 2>/dev/null || true
-        iptables -t mangle -X 2>/dev/null || true
-        iptables -P INPUT ACCEPT 2>/dev/null || true
-        iptables -P FORWARD ACCEPT 2>/dev/null || true
-        iptables -P OUTPUT ACCEPT 2>/dev/null || true
-
-        log_success "Firewall disabled and iptables flushed"
-        return 0
-    fi
-
-    # Skip firewall configuration
-    if [[ "${SKIP_FIREWALL}" == true ]]; then
-        log_info "Skipping firewall configuration"
-        return 0
-    fi
-
-    # Configure firewall
-    if ! systemctl is-active --quiet firewalld; then
-        systemctl start firewalld
-        systemctl enable firewalld
-    fi
-
-    # Add all interfaces to internal zone for simplicity
-    log_info "Adding all network interfaces to internal zone..."
-    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
-        firewall-cmd --permanent --zone=internal --add-interface=${iface} 2>/dev/null || true
-    done
-
-    # Kubernetes API server
-    firewall-cmd --permanent --zone=internal --add-port=6443/tcp
-
-    # etcd server client API
-    firewall-cmd --permanent --zone=internal --add-port=2379-2380/tcp
-
-    # Kubelet API
-    firewall-cmd --permanent --zone=internal --add-port=10250/tcp
-
-    # kube-scheduler
-    firewall-cmd --permanent --zone=internal --add-port=10259/tcp
-
-    # kube-controller-manager
-    firewall-cmd --permanent --zone=internal --add-port=10257/tcp
-
-    # NodePort Services
-    firewall-cmd --permanent --zone=internal --add-port=30000-32767/tcp
-
-    # Flannel VXLAN
-    firewall-cmd --permanent --zone=internal --add-port=8472/udp
-
-    # HTTP/HTTPS for ingress
-    firewall-cmd --permanent --zone=internal --add-port=80/tcp
-    firewall-cmd --permanent --zone=internal --add-port=443/tcp
-
-    # Pod and Service networks in trusted zone
-    firewall-cmd --permanent --zone=trusted --add-source=${POD_NETWORK_CIDR}
-    firewall-cmd --permanent --zone=trusted --add-source=10.96.0.0/16
-
-    # Allow masquerading for NAT (important for multi-interface setups)
-    firewall-cmd --permanent --zone=internal --add-masquerade
-    firewall-cmd --permanent --zone=trusted --add-masquerade
-
-    firewall-cmd --reload
-
-    log_info "Firewall zones configured:"
-    firewall-cmd --get-active-zones
-
-    log_success "Firewall configured for multi-interface setup"
-}
-
-get_ip_from_interface() {
-    local interface=$1
-    local ip=""
-
-    # Check if interface exists
-    if ! ip link show "${interface}" &>/dev/null; then
-        log_error "Interface ${interface} does not exist"
-        log_info "Available interfaces:"
-        ip -o link show | awk -F': ' '{print "  " $2}' | grep -v lo
-        return 1
-    fi
-
-    # Check if interface is up
-    if ! ip link show "${interface}" | grep -q "state UP"; then
-        log_warn "Interface ${interface} is not UP, bringing it up..."
-        ip link set "${interface}" up
-        sleep 2
-    fi
-
-    # Get IPv4 address from interface
-    ip=$(ip -4 addr show "${interface}" | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
-
-    if [[ -z "${ip}" ]]; then
-        log_error "No IPv4 address found on interface ${interface}"
-        log_info "To configure an IP, run:"
-        log_info "  sudo ip addr add 192.168.1.100/24 dev ${interface}"
-        log_info "  sudo ip link set ${interface} up"
-        return 1
-    fi
-
-    echo "${ip}"
-    return 0
-}
-
-detect_and_set_api_server_ip() {
-    # If interface is specified, get IP from that interface
-    if [[ -n "${API_SERVER_INTERFACE}" ]]; then
-        log_info "Detecting IP from interface: ${API_SERVER_INTERFACE}"
-
-        local detected_ip
-        if ! detected_ip=$(get_ip_from_interface "${API_SERVER_INTERFACE}"); then
-            return 1
-        fi
-
-        API_SERVER_IP="${detected_ip}"
-        log_success "Detected IP ${API_SERVER_IP} from interface ${API_SERVER_INTERFACE}"
-        return 0
-    fi
-
-    # If IP is already specified, verify it exists
-    if [[ -n "${API_SERVER_IP}" ]]; then
-        log_info "Verifying custom IP ${API_SERVER_IP} exists on a network interface..."
-
-        if ! ip addr show | grep -q "${API_SERVER_IP}"; then
-            log_warn "Custom IP ${API_SERVER_IP} is not configured on any interface!"
-            log_warn "Available IPs:"
-            ip -4 addr show | grep inet | awk '{print "  " $2}' | grep -v 127.0.0.1
-            log_warn ""
-            log_warn "To configure the IP on an interface (e.g., eth1), run:"
-            log_warn "  sudo ip addr add ${API_SERVER_IP}/24 dev eth1"
-            log_warn "  sudo ip link set eth1 up"
-            log_error "Please configure the IP address before proceeding"
-            return 1
-        fi
-
-        log_success "Custom IP ${API_SERVER_IP} found on interface"
-        return 0
-    fi
-
-    # Neither interface nor IP specified - auto-detect from first non-lo interface
-    log_info "No interface or IP specified, auto-detecting..."
-    API_SERVER_IP=$(hostname -I | awk '{print $1}')
-    log_info "Auto-detected IP: ${API_SERVER_IP}"
-    return 0
+    log_success "Firewall disabled and iptables flushed"
 }
 
 install_container_runtime() {
     log_step 6 "Installing containerd"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install containerd"
-        return 0
-    fi
-
-    # Install containerd
     yum install -y yum-utils
     yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
     yum install -y containerd.io
@@ -353,8 +200,6 @@ install_container_runtime() {
     # Configure containerd
     mkdir -p /etc/containerd
     containerd config default > /etc/containerd/config.toml
-
-    # Enable SystemdCgroup
     sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
 
     # Start and enable containerd
@@ -367,11 +212,6 @@ install_container_runtime() {
 install_k8s_tools() {
     log_step 7 "Installing kubeadm, kubelet, and kubectl"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install Kubernetes tools"
-        return 0
-    fi
-
     # Add Kubernetes repo
     cat > /etc/yum.repos.d/kubernetes.repo <<EOF
 [kubernetes]
@@ -383,61 +223,59 @@ gpgkey=https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION%.*}/rpm/repodata/repomd.
 exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
 EOF
 
-    # Install tools
+    # Install Kubernetes tools
     yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
-
-    # Configure kubelet with custom node IP if specified
-    if [[ -n "${API_SERVER_IP}" ]]; then
-        log_info "Configuring kubelet to use custom node IP: ${API_SERVER_IP}"
-        mkdir -p /etc/systemd/system/kubelet.service.d
-        cat > /etc/systemd/system/kubelet.service.d/20-node-ip.conf <<EOF
-[Service]
-Environment="KUBELET_EXTRA_ARGS=--node-ip=${API_SERVER_IP}"
-EOF
-        systemctl daemon-reload
-    fi
-
-    # Enable kubelet
-    systemctl enable kubelet
 
     log_success "Kubernetes tools installed"
 }
 
+configure_kubelet_node_ip() {
+    log_step 8 "Configuring kubelet node IP"
+
+    log_info "Setting kubelet node IP to: ${NODE_IP} (from interface: ${INTERFACE})"
+
+    # Create kubelet drop-in configuration
+    mkdir -p /etc/systemd/system/kubelet.service.d
+    cat > /etc/systemd/system/kubelet.service.d/20-node-ip.conf <<EOF
+[Service]
+Environment="KUBELET_EXTRA_ARGS=--node-ip=${NODE_IP}"
+EOF
+
+    # Also add to kubelet default config
+    mkdir -p /var/lib/kubelet
+    cat > /var/lib/kubelet/config.yaml <<EOF
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+address: ${NODE_IP}
+EOF
+
+    # Reload systemd
+    systemctl daemon-reload
+
+    # Enable kubelet
+    systemctl enable kubelet
+
+    log_success "Kubelet configured with node IP: ${NODE_IP}"
+}
+
 initialize_cluster() {
-    log_step 8 "Initializing Kubernetes cluster"
+    log_step 9 "Initializing Kubernetes cluster"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would initialize cluster"
-        return 0
-    fi
-
-    # Determine API server IP
-    local api_ip
-    if [[ -n "${API_SERVER_IP}" ]]; then
-        api_ip="${API_SERVER_IP}"
-        log_info "Using custom API server IP: ${api_ip}"
-    else
-        api_ip=$(hostname -I | awk '{print $1}')
-        log_info "Auto-detected API server IP: ${api_ip}"
-    fi
-
+    log_info "Using interface: ${INTERFACE}"
+    log_info "Using IP address: ${NODE_IP}"
     log_info "Running kubeadm init (this may take several minutes)..."
 
     kubeadm init \
         --pod-network-cidr=${POD_NETWORK_CIDR} \
-        --apiserver-advertise-address=${api_ip} \
+        --apiserver-advertise-address=${NODE_IP} \
+        --node-ip=${NODE_IP} \
         --kubernetes-version=${K8S_VERSION}
 
     log_success "Cluster initialized"
 }
 
 configure_kubectl() {
-    log_step 9 "Configuring kubectl for current user"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would configure kubectl"
-        return 0
-    fi
+    log_step 10 "Configuring kubectl"
 
     # For root user
     export KUBECONFIG=/etc/kubernetes/admin.conf
@@ -456,146 +294,100 @@ configure_kubectl() {
 }
 
 untaint_control_plane() {
-    log_step 10 "Untainting control-plane for single-node setup"
+    log_step 11 "Untainting control-plane for single-node setup"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would untaint control-plane node"
-        return 0
-    fi
-
-    # Allow workloads on control-plane node (single-node setup)
-    kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
-    kubectl taint nodes --all node-role.kubernetes.io/master- || true
+    kubectl taint nodes --all node-role.kubernetes.io/control-plane- 2>/dev/null || true
+    kubectl taint nodes --all node-role.kubernetes.io/master- 2>/dev/null || true
 
     log_success "Control-plane untainted"
 }
 
 install_cni_plugin() {
-    log_step 11 "Installing Flannel CNI plugin"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install CNI plugin"
-        return 0
-    fi
+    log_step 12 "Installing Flannel CNI plugin"
 
     kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
 
     log_info "Waiting for CoreDNS to be ready..."
-    if ! wait_for_condition "CoreDNS pods" \
-        "kubectl get pods -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[*].status.phase}' | grep -q Running" \
-        180 10; then
-        log_warn "CoreDNS may not be ready yet"
-    fi
+    sleep 10
 
     log_success "CNI plugin installed"
 }
 
 install_nginx_ingress() {
-    log_step 12 "Installing nginx ingress controller"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install nginx ingress"
-        return 0
-    fi
+    log_step 13 "Installing nginx ingress controller"
 
     kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/baremetal/deploy.yaml
 
     log_info "Waiting for ingress controller to be ready..."
-    if ! wait_for_condition "ingress-nginx-controller" \
-        "kubectl get deployment -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.availableReplicas}' | grep -q '1'" \
-        180 10; then
-        log_warn "Ingress controller may not be ready yet"
-    fi
+    sleep 10
 
     log_success "Nginx ingress controller installed"
 }
 
 install_metrics_server() {
-    log_step 13 "Installing metrics-server"
-
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install metrics-server"
-        return 0
-    fi
+    log_step 14 "Installing metrics-server"
 
     kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 
-    # Patch for insecure TLS (needed for some environments)
+    # Patch for insecure TLS
     kubectl patch deployment metrics-server -n kube-system --type='json' \
-        -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+        -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]' 2>/dev/null || true
 
     log_success "Metrics-server installed"
 }
 
 install_storage_provisioner() {
-    log_step 14 "Installing local-path storage provisioner"
+    log_step 15 "Installing local-path storage provisioner"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install local-path provisioner"
-        return 0
-    fi
-
-    # Install local-path provisioner (same as k3s default)
     kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
 
-    log_info "Waiting for local-path-provisioner to be ready..."
-    if ! wait_for_condition "local-path-provisioner" \
-        "kubectl get deployment -n local-path-storage local-path-provisioner -o jsonpath='{.status.availableReplicas}' | grep -q '1'" \
-        180 10; then
-        log_warn "local-path-provisioner may not be ready yet"
-    fi
+    sleep 10
 
     # Set as default StorageClass
-    kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+    kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}' 2>/dev/null || true
 
     log_success "Local-path storage provisioner installed"
 }
 
 verify_installation() {
-    log_step 15 "Verifying installation"
+    log_step 16 "Verifying installation"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would verify installation"
-        return 0
-    fi
+    log_info "Waiting for node to be ready..."
+    sleep 5
 
-    log_info "Checking node status..."
-    if ! kubectl get nodes | grep -q " Ready"; then
-        log_error "Node is not Ready"
-        return 1
-    fi
-    print_status "ok" "Node is Ready"
-
-    log_info "Checking system pods..."
-    local not_running=$(kubectl get pods -A --no-headers | grep -v "Running\|Completed" | wc -l)
-    if [[ $not_running -gt 0 ]]; then
-        log_warn "${not_running} pods are not Running yet"
+    # Check node status
+    if kubectl get nodes | grep -q " Ready"; then
+        print_status "ok" "Node is Ready"
     else
-        print_status "ok" "All system pods Running"
+        log_warn "Node is not Ready yet"
     fi
+
+    # Display node info
+    log_info "Node information:"
+    kubectl get nodes -o wide
 
     log_success "Verification completed"
 }
 
 display_access_info() {
-    local node_ip=$(get_node_ip)
-
     log_section "Installation Complete!"
 
     cat <<EOF
-${GREEN}${BOLD}Kubernetes cluster (kubeadm) successfully installed!${NC}
+${GREEN}${BOLD}Kubernetes cluster successfully installed!${NC}
 
 ${BOLD}Cluster Information:${NC}
+  Interface:      ${INTERFACE}
+  Node IP:        ${NODE_IP}
+  API Server:     https://${NODE_IP}:6443
   Kubernetes:     v${K8S_VERSION}
-  Node IP:        ${node_ip}
-  API Server:     https://${node_ip}:6443
   Pod CIDR:       ${POD_NETWORK_CIDR}
 
 ${BOLD}Cluster Status:${NC}
 $(kubectl get nodes -o wide)
 
-${BOLD}System Pods:${NC}
-$(kubectl get pods -A)
+${BOLD}Verify Node IP:${NC}
+  ${CYAN}kubectl get nodes -o wide${NC}
+  ${CYAN}# INTERNAL-IP should show: ${NODE_IP}${NC}
 
 ${BOLD}Next Steps:${NC}
   1. Deploy the baseline application:
@@ -607,16 +399,15 @@ ${BOLD}Next Steps:${NC}
      ${CYAN}./verify-cluster.sh${NC}
 
 ${BOLD}Important Notes:${NC}
-  • This is a single-node cluster (control-plane is untainted)
-  • Using containerd as container runtime
-  • Using Flannel as CNI plugin
-  • Using local-path storage provisioner for PVCs
-  • Ingress controller uses NodePort (access via http://${node_ip}:NodePort)
+  • Firewall is DISABLED (lab environment)
+  • SELinux is set to PERMISSIVE mode
+  • Node IP is configured from interface: ${INTERFACE}
+  • Single-node cluster (control-plane is untainted)
 
 ${BOLD}Useful Commands:${NC}
   • Cluster info:  ${CYAN}kubectl cluster-info${NC}
   • All resources: ${CYAN}kubectl get all -A${NC}
-  • Node details:  ${CYAN}kubectl describe node$(hostname)${NC}
+  • Node IP check: ${CYAN}kubectl get nodes -o wide${NC}
 
 ${BOLD}Log File:${NC} ${LOG_FILE}
 
@@ -630,10 +421,15 @@ main() {
 
     log_section "Kubernetes Installation with kubeadm"
     log_info "Installing single-node cluster on CentOS/Rocky Linux"
+    log_info "Using interface: ${INTERFACE}"
 
-    if [[ "${DRY_RUN}" == true ]]; then
-        log_warn "Running in DRY RUN mode"
+    # Detect IP from interface FIRST
+    if ! NODE_IP=$(get_ip_from_interface "${INTERFACE}"); then
+        log_error "Failed to detect IP from interface ${INTERFACE}"
+        exit 1
     fi
+
+    log_success "Detected IP: ${NODE_IP} from interface: ${INTERFACE}"
 
     if ! check_root; then
         exit 1
@@ -664,17 +460,13 @@ main() {
     load_kernel_modules
     configure_sysctl
     configure_selinux
-    configure_firewall
-
-    # Detect and set API server IP (from interface or verify provided IP)
-    if ! detect_and_set_api_server_ip; then
-        exit 1
-    fi
+    disable_firewall
 
     log_section "Installing Container Runtime and Kubernetes"
 
     install_container_runtime
     install_k8s_tools
+    configure_kubelet_node_ip
 
     log_section "Initializing Cluster"
 

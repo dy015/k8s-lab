@@ -39,16 +39,14 @@ A hands-on workshop where you deploy a working 3-tier application, then systemat
 
 ```bash
 cd setup
-sudo ./00-install-cluster.sh  # Firewall disabled by default (lab environment)
 
-# For multiple network interfaces, specify which interface to use:
-# sudo ./00-install-cluster.sh --interface eth1  # Recommended!
+# REQUIRED: Specify which network interface to use
+sudo ./00-install-cluster.sh --interface eth1
 
-# Or specify IP directly (old way, still works):
-# sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
-
-# For production with firewall enabled:
-# sudo ./00-install-cluster.sh --interface eth1 --enable-firewall
+# Replace 'eth1' with your interface name:
+# - Use 'ip link show' to see available interfaces
+# - Choose the interface with IP accessible from your laptop
+# - Common names: eth1, eno1, enp0s8, etc.
 
 ./verify-cluster.sh
 ```

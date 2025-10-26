@@ -23,18 +23,21 @@ Installs kubeadm Kubernetes cluster with all required components.
 
 **Usage:**
 ```bash
-sudo ./00-install-cluster.sh [OPTIONS]
+sudo ./00-install-cluster.sh --interface <interface_name>
 ```
 
-**Options:**
+**Required:**
+- `--interface <name>` - Network interface to use (e.g., eth1, eno1, enp0s8)
+
+**Optional:**
 - `--k8s-version VERSION` - Specify Kubernetes version (default: 1.28.0)
 - `--pod-cidr CIDR` - Pod network CIDR (default: 10.244.0.0/16)
-- `--interface IFACE` - Network interface to use (e.g., eth1, eth2) - **Recommended for multi-interface setups**
-- `--api-server-ip IP` - API server advertise IP (default: auto-detect)
-- `--enable-firewall` - Enable and configure firewall (for production)
-- `--skip-firewall` - Skip firewall configuration (leave as-is)
-- `--dry-run` - Show what would be done without executing
 - `-h, --help` - Show help message
+
+**Notes:**
+- Firewall is DISABLED automatically (lab environment)
+- SELinux is set to PERMISSIVE mode automatically
+- Interface MUST have an IP address configured
 
 **What it does:**
 1. Validates system requirements (4GB RAM, 20GB disk, 2 CPU cores)
@@ -55,23 +58,20 @@ sudo ./00-install-cluster.sh [OPTIONS]
 
 **Examples:**
 ```bash
-# Install with defaults (firewall disabled for lab environment)
-sudo ./00-install-cluster.sh
-
-# Install using specific network interface (RECOMMENDED for multi-interface)
+# Install using eth1 interface
 sudo ./00-install-cluster.sh --interface eth1
 
+# Install using eno1 interface
+sudo ./00-install-cluster.sh --interface eno1
+
 # Install with specific Kubernetes version
-sudo ./00-install-cluster.sh --k8s-version 1.28.0 --interface eth1
+sudo ./00-install-cluster.sh --interface eth1 --k8s-version 1.29.0
 
-# Install with custom API server IP (old way, still works)
-sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
+# Check available interfaces first
+ip link show
 
-# Install with firewall enabled (for production)
-sudo ./00-install-cluster.sh --interface eth1 --enable-firewall
-
-# Dry run to see what would be done
-sudo ./00-install-cluster.sh --interface eth1 --dry-run
+# Then install with your chosen interface
+sudo ./00-install-cluster.sh --interface <your-interface>
 ```
 
 **Installation Time:** 5-10 minutes
