@@ -17,7 +17,7 @@ K8S_VERSION="${K8S_VERSION:-1.28.0}"
 POD_NETWORK_CIDR="10.244.0.0/16"
 API_SERVER_IP=""  # Auto-detect if empty
 SKIP_FIREWALL=false
-DISABLE_FIREWALL=false
+DISABLE_FIREWALL=true  # Default for lab/workshop environment
 DRY_RUN=false
 
 show_usage() {
@@ -30,17 +30,17 @@ OPTIONS:
     --k8s-version VERSION    Specify Kubernetes version (default: 1.28.0)
     --pod-cidr CIDR          Pod network CIDR (default: 10.244.0.0/16)
     --api-server-ip IP       API server advertise IP (default: auto-detect)
+    --enable-firewall        Enable and configure firewall (for production)
     --skip-firewall          Skip firewall configuration (leave as-is)
-    --disable-firewall       Completely disable firewall (recommended for labs)
     --dry-run                Show what would be done without executing
     -h, --help               Show this help message
 
 EXAMPLES:
-    sudo $0
+    sudo $0                                         # Firewall disabled (default)
     sudo $0 --k8s-version 1.29.0
-    sudo $0 --pod-cidr 10.244.0.0/16
     sudo $0 --api-server-ip 192.168.1.100
-    sudo $0 --api-server-ip 192.168.1.100 --disable-firewall
+    sudo $0 --enable-firewall                       # Enable firewall for production
+    sudo $0 --api-server-ip 192.168.1.100 --enable-firewall
 
 EOF
 }
@@ -60,12 +60,12 @@ parse_args() {
                 API_SERVER_IP="$2"
                 shift 2
                 ;;
-            --skip-firewall)
-                SKIP_FIREWALL=true
+            --enable-firewall)
+                DISABLE_FIREWALL=false
                 shift
                 ;;
-            --disable-firewall)
-                DISABLE_FIREWALL=true
+            --skip-firewall)
+                SKIP_FIREWALL=true
                 shift
                 ;;
             --dry-run)

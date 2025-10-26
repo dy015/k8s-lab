@@ -54,7 +54,7 @@ sudo ./00-install-cluster.sh [OPTIONS]
 
 **Examples:**
 ```bash
-# Install with defaults (auto-detect IP)
+# Install with defaults (firewall disabled for lab environment)
 sudo ./00-install-cluster.sh
 
 # Install with specific Kubernetes version
@@ -63,11 +63,11 @@ sudo ./00-install-cluster.sh --k8s-version 1.28.0
 # Install with custom API server IP (for multiple interfaces)
 sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
 
+# Install with firewall enabled (for production)
+sudo ./00-install-cluster.sh --enable-firewall
+
 # Dry run to see what would be done
 sudo ./00-install-cluster.sh --dry-run
-
-# Skip firewall configuration
-sudo ./00-install-cluster.sh --skip-firewall
 ```
 
 **Installation Time:** 5-10 minutes
