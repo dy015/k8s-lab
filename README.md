@@ -39,7 +39,14 @@ A hands-on workshop where you deploy a working 3-tier application, then systemat
 
 ```bash
 cd setup
-sudo ./00-install-cluster.sh
+sudo ./00-install-cluster.sh  # Firewall disabled by default (lab environment)
+
+# Or with custom IP (for multiple network interfaces):
+# sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
+
+# For production with firewall enabled:
+# sudo ./00-install-cluster.sh --enable-firewall
+
 ./verify-cluster.sh
 ```
 

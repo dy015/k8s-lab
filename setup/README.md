@@ -28,6 +28,8 @@ sudo ./00-install-cluster.sh [OPTIONS]
 
 **Options:**
 - `--k8s-version VERSION` - Specify Kubernetes version (default: 1.28.0)
+- `--pod-cidr CIDR` - Pod network CIDR (default: 10.244.0.0/16)
+- `--api-server-ip IP` - API server advertise IP (default: auto-detect)
 - `--skip-firewall` - Skip firewall configuration
 - `--skip-selinux` - Skip SELinux configuration
 - `--dry-run` - Show what would be done without executing
@@ -52,17 +54,20 @@ sudo ./00-install-cluster.sh [OPTIONS]
 
 **Examples:**
 ```bash
-# Install with defaults
+# Install with defaults (firewall disabled for lab environment)
 sudo ./00-install-cluster.sh
 
-# Install specific Kubernetes version
+# Install with specific Kubernetes version
 sudo ./00-install-cluster.sh --k8s-version 1.28.0
+
+# Install with custom API server IP (for multiple interfaces)
+sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
+
+# Install with firewall enabled (for production)
+sudo ./00-install-cluster.sh --enable-firewall
 
 # Dry run to see what would be done
 sudo ./00-install-cluster.sh --dry-run
-
-# Skip firewall configuration
-sudo ./00-install-cluster.sh --skip-firewall
 ```
 
 **Installation Time:** 5-10 minutes
