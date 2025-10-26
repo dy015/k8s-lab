@@ -264,6 +264,17 @@ EOF
     # Install tools
     yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
 
+    # Configure kubelet with custom node IP if specified
+    if [[ -n "${API_SERVER_IP}" ]]; then
+        log_info "Configuring kubelet to use custom node IP: ${API_SERVER_IP}"
+        mkdir -p /etc/systemd/system/kubelet.service.d
+        cat > /etc/systemd/system/kubelet.service.d/20-node-ip.conf <<EOF
+[Service]
+Environment="KUBELET_EXTRA_ARGS=--node-ip=${API_SERVER_IP}"
+EOF
+        systemctl daemon-reload
+    fi
+
     # Enable kubelet
     systemctl enable kubelet
 
