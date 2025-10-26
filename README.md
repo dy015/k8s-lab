@@ -40,6 +40,10 @@ A hands-on workshop where you deploy a working 3-tier application, then systemat
 ```bash
 cd setup
 sudo ./00-install-cluster.sh
+
+# Or with custom IP (for multiple network interfaces):
+# sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
+
 ./verify-cluster.sh
 ```
 

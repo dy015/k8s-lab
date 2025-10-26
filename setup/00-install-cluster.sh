@@ -15,7 +15,9 @@ source "${HELPERS_DIR}/validators.sh"
 
 K8S_VERSION="${K8S_VERSION:-1.28.0}"
 POD_NETWORK_CIDR="10.244.0.0/16"
+API_SERVER_IP=""  # Auto-detect if empty
 SKIP_FIREWALL=false
+DISABLE_FIREWALL=false
 DRY_RUN=false
 
 show_usage() {
@@ -27,7 +29,9 @@ Install Kubernetes cluster using kubeadm on CentOS/Rocky Linux (single-node)
 OPTIONS:
     --k8s-version VERSION    Specify Kubernetes version (default: 1.28.0)
     --pod-cidr CIDR          Pod network CIDR (default: 10.244.0.0/16)
-    --skip-firewall          Skip firewall configuration
+    --api-server-ip IP       API server advertise IP (default: auto-detect)
+    --skip-firewall          Skip firewall configuration (leave as-is)
+    --disable-firewall       Completely disable firewall (recommended for labs)
     --dry-run                Show what would be done without executing
     -h, --help               Show this help message
 
@@ -35,6 +39,8 @@ EXAMPLES:
     sudo $0
     sudo $0 --k8s-version 1.29.0
     sudo $0 --pod-cidr 10.244.0.0/16
+    sudo $0 --api-server-ip 192.168.1.100
+    sudo $0 --api-server-ip 192.168.1.100 --disable-firewall
 
 EOF
 }
@@ -50,8 +56,16 @@ parse_args() {
                 POD_NETWORK_CIDR="$2"
                 shift 2
                 ;;
+            --api-server-ip)
+                API_SERVER_IP="$2"
+                shift 2
+                ;;
             --skip-firewall)
                 SKIP_FIREWALL=true
+                shift
+                ;;
+            --disable-firewall)
+                DISABLE_FIREWALL=true
                 shift
                 ;;
             --dry-run)
@@ -124,57 +138,81 @@ EOF
 }
 
 configure_firewall() {
-    if [[ "${SKIP_FIREWALL}" == true ]]; then
-        log_info "Skipping firewall configuration"
-        return 0
-    fi
-
-    log_step 4 "Configuring firewall for kubeadm"
+    log_step 4 "Configuring firewall"
 
     if [[ "${DRY_RUN}" == true ]]; then
         log_info "[DRY RUN] Would configure firewall"
         return 0
     fi
 
+    # Disable firewall completely
+    if [[ "${DISABLE_FIREWALL}" == true ]]; then
+        log_info "Disabling firewall completely..."
+        if systemctl is-active --quiet firewalld; then
+            systemctl stop firewalld
+        fi
+        systemctl disable firewalld
+        log_success "Firewall disabled"
+        return 0
+    fi
+
+    # Skip firewall configuration
+    if [[ "${SKIP_FIREWALL}" == true ]]; then
+        log_info "Skipping firewall configuration"
+        return 0
+    fi
+
+    # Configure firewall
     if ! systemctl is-active --quiet firewalld; then
         systemctl start firewalld
         systemctl enable firewalld
     fi
 
+    # Add all interfaces to internal zone for simplicity
+    log_info "Adding all network interfaces to internal zone..."
+    for iface in $(ip -o link show | awk -F': ' '{print $2}' | grep -v lo); do
+        firewall-cmd --permanent --zone=internal --add-interface=${iface} 2>/dev/null || true
+    done
+
     # Kubernetes API server
-    firewall-cmd --permanent --add-port=6443/tcp
+    firewall-cmd --permanent --zone=internal --add-port=6443/tcp
 
     # etcd server client API
-    firewall-cmd --permanent --add-port=2379-2380/tcp
+    firewall-cmd --permanent --zone=internal --add-port=2379-2380/tcp
 
     # Kubelet API
-    firewall-cmd --permanent --add-port=10250/tcp
+    firewall-cmd --permanent --zone=internal --add-port=10250/tcp
 
     # kube-scheduler
-    firewall-cmd --permanent --add-port=10259/tcp
+    firewall-cmd --permanent --zone=internal --add-port=10259/tcp
 
     # kube-controller-manager
-    firewall-cmd --permanent --add-port=10257/tcp
+    firewall-cmd --permanent --zone=internal --add-port=10257/tcp
 
     # NodePort Services
-    firewall-cmd --permanent --add-port=30000-32767/tcp
+    firewall-cmd --permanent --zone=internal --add-port=30000-32767/tcp
 
     # Flannel VXLAN
-    firewall-cmd --permanent --add-port=8472/udp
+    firewall-cmd --permanent --zone=internal --add-port=8472/udp
 
     # HTTP/HTTPS for ingress
-    firewall-cmd --permanent --add-port=80/tcp
-    firewall-cmd --permanent --add-port=443/tcp
+    firewall-cmd --permanent --zone=internal --add-port=80/tcp
+    firewall-cmd --permanent --zone=internal --add-port=443/tcp
 
-    # Pod and Service networks
-    if firewall-cmd --get-active-zones | grep -q trusted; then
-        firewall-cmd --permanent --zone=trusted --add-source=${POD_NETWORK_CIDR}
-        firewall-cmd --permanent --zone=trusted --add-source=10.96.0.0/16
-    fi
+    # Pod and Service networks in trusted zone
+    firewall-cmd --permanent --zone=trusted --add-source=${POD_NETWORK_CIDR}
+    firewall-cmd --permanent --zone=trusted --add-source=10.96.0.0/16
+
+    # Allow masquerading for NAT (important for multi-interface setups)
+    firewall-cmd --permanent --zone=internal --add-masquerade
+    firewall-cmd --permanent --zone=trusted --add-masquerade
 
     firewall-cmd --reload
 
-    log_success "Firewall configured"
+    log_info "Firewall zones configured:"
+    firewall-cmd --get-active-zones
+
+    log_success "Firewall configured for multi-interface setup"
 }
 
 install_container_runtime() {
@@ -240,11 +278,21 @@ initialize_cluster() {
         return 0
     fi
 
+    # Determine API server IP
+    local api_ip
+    if [[ -n "${API_SERVER_IP}" ]]; then
+        api_ip="${API_SERVER_IP}"
+        log_info "Using custom API server IP: ${api_ip}"
+    else
+        api_ip=$(hostname -I | awk '{print $1}')
+        log_info "Auto-detected API server IP: ${api_ip}"
+    fi
+
     log_info "Running kubeadm init (this may take several minutes)..."
 
     kubeadm init \
         --pod-network-cidr=${POD_NETWORK_CIDR} \
-        --apiserver-advertise-address=$(hostname -I | awk '{print $1}') \
+        --apiserver-advertise-address=${api_ip} \
         --kubernetes-version=${K8S_VERSION}
 
     log_success "Cluster initialized"
