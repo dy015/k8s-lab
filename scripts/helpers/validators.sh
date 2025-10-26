@@ -163,8 +163,11 @@ check_k8s_installed() {
     if command_exists kubectl && kubectl cluster-info >/dev/null 2>&1; then
         log_warn "Kubernetes cluster is already running"
         return 0
-    elif systemctl list-unit-files | grep -q k3s; then
-        log_warn "k3s is already installed"
+    elif systemctl list-unit-files | grep -q kubelet; then
+        log_warn "kubelet is already installed"
+        return 0
+    elif [[ -f /etc/kubernetes/admin.conf ]]; then
+        log_warn "Kubernetes (kubeadm) is already installed"
         return 0
     else
         log_debug "No existing Kubernetes installation detected"

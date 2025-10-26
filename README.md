@@ -8,7 +8,7 @@ A hands-on workshop where you deploy a working 3-tier application, then systemat
 
 ## 🎯 What You'll Learn
 
-- Install and configure Kubernetes (k3s) on CentOS
+- Install and configure Kubernetes (kubeadm) on CentOS/Rocky Linux
 - Deploy multi-tier applications (Frontend → Backend → Database)
 - Master kubectl troubleshooting commands
 - Fix 15 common Kubernetes issues:
@@ -21,13 +21,21 @@ A hands-on workshop where you deploy a working 3-tier application, then systemat
 
 **Duration:** 8-10 hours
 **Difficulty:** Basic → Medium
-**Target OS:** CentOS 7.9+, CentOS 8 Stream, Rocky Linux 8
+**Target OS:** CentOS Stream 9, Rocky Linux 8/9
+**Architecture:** x86_64/amd64 and ARM64/aarch64 (Multi-arch support)
 
 ---
 
-## ⚡ Quick Start (15 Minutes)
+## ⚡ Quick Start (20 Minutes)
 
-### 1. Install Kubernetes Cluster (5-10 min)
+### Prerequisites
+
+- **VM:** VirtualBox or similar with CentOS Stream 9 (x86_64)
+- **Resources:** 4GB RAM (8GB recommended), 2 CPU, 20GB disk
+- **Access:** Root or sudo access
+- **Network:** Internet connection
+
+### Step 1: Install Kubernetes Cluster (8-12 min)
 
 ```bash
 cd setup
@@ -35,7 +43,14 @@ sudo ./00-install-cluster.sh
 ./verify-cluster.sh
 ```
 
-### 2. Deploy Application (3-5 min)
+**What this installs:**
+- kubeadm, kubelet, kubectl
+- containerd container runtime
+- Flannel CNI plugin
+- nginx-ingress controller
+- metrics-server
+
+### Step 2: Deploy Application (3-5 min)
 
 ```bash
 cd ../baseline-app
@@ -45,7 +60,7 @@ cd ../baseline-app
 
 **Images automatically pulled from:** `docker.io/reddydodda`
 
-### 3. Configure Access
+### Step 3: Configure Access
 
 ```bash
 # Get your VM IP
@@ -55,13 +70,13 @@ kubectl get nodes -o wide
 echo "YOUR_VM_IP taskmaster.local" | sudo tee -a /etc/hosts
 ```
 
-### 4. Access Dashboard
+### Step 4: Access Dashboard
 
 **Open:** http://taskmaster.local
 
 You should see a beautiful dashboard with real-time status!
 
-### 5. Start Learning
+### Step 5: Start Learning
 
 ```bash
 cd ../exercises/01-crashloopbackoff
@@ -69,41 +84,6 @@ cat README.md
 ./break.sh
 # Now troubleshoot and fix!
 ```
-
-**See [QUICKSTART.md](QUICKSTART.md) for detailed step-by-step guide.**
-
----
-
-## 📦 What's Included
-
-### ✅ Production-Ready Components
-
-- **Cluster Setup** - Complete k3s installation for CentOS
-- **3-Tier Application** - Frontend, Backend API, PostgreSQL
-- **Docker Images** - Pre-built and published to Docker Hub
-- **15 Exercises** - Progressively harder scenarios (1 complete, 14 templates ready)
-- **Helper Scripts** - Beautiful logging, validation, and utilities
-- **Documentation** - Setup guides and troubleshooting tips
-
-### 🎨 Application Features
-
-**Frontend (nginx):**
-- Responsive HTML/CSS/JS dashboard
-- Real-time status monitoring
-- Task management UI
-- Color-coded health indicators (🟢 🟡 🔴)
-
-**Backend (Python Flask):**
-- REST API with health endpoints
-- PostgreSQL integration
-- Full CRUD operations for tasks
-- Production-ready with gunicorn
-
-**Database (PostgreSQL):**
-- Persistent storage (5Gi PVC)
-- Auto-initialized schema
-- Seed data included
-- Health checks configured
 
 ---
 
@@ -137,11 +117,16 @@ cat README.md
                 └────────────┘
 ```
 
+**Stack:**
+- **K8s:** kubeadm v1.28
+- **Runtime:** containerd
+- **CNI:** Flannel
+- **Ingress:** nginx-ingress
+- **Metrics:** metrics-server
+
 ---
 
-## 📚 Workshop Structure
-
-### Exercises
+## 📚 Workshop Exercises
 
 | # | Exercise | Issue | Difficulty | Time |
 |---|----------|-------|------------|------|
@@ -161,7 +146,7 @@ cat README.md
 | 14 | Node Pressure | Disk full | ⭐⭐⭐⭐ Advanced | 35m |
 | 15 | Rollout Stuck | Bad deployment | ⭐⭐⭐ Medium | 30m |
 
-**Current Status:** Exercise 01 complete with all scripts and documentation
+**Current Status:** Exercise 01 complete, others ready as templates
 
 ---
 
@@ -171,21 +156,16 @@ cat README.md
 - **CPU:** 2 cores
 - **RAM:** 4 GB
 - **Disk:** 20 GB
-- **OS:** CentOS 7.9+, CentOS 8 Stream, Rocky Linux 8
+- **OS:** CentOS Stream 9, Rocky Linux 8/9
+- **Architecture:** x86_64/amd64 or ARM64/aarch64 (Multi-arch)
 
 ### Recommended
 - **CPU:** 4 cores
 - **RAM:** 8 GB
 - **Disk:** 40 GB
 
----
-
-## 📖 Documentation
-
-- **[QUICKSTART.md](QUICKSTART.md)** - Get started in 15 minutes
-- **[IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md)** - Current progress
-- **[setup/README.md](setup/README.md)** - Cluster installation details
-- **[files/K8S-WORKSHOP-DESIGN.md](files/K8S-WORKSHOP-DESIGN.md)** - Full design spec
+### ✅ Multi-Architecture Support
+**ARM64 SUPPORTED:** Docker images are built for both x86_64 and ARM64 architectures. The images will automatically pull the correct version for your system. See `BUILD-MULTI-ARCH-IMAGES.md` for details.
 
 ---
 
@@ -196,10 +176,14 @@ cat README.md
 ```bash
 # View cluster info
 kubectl cluster-info
-kubectl get nodes
+kubectl get nodes -o wide
 
 # View all resources
 kubectl get all -A
+
+# Check services
+systemctl status kubelet
+systemctl status containerd
 ```
 
 ### Application Management
@@ -233,6 +217,10 @@ kubectl port-forward -n taskmaster svc/backend-svc 5000:5000
 # Check resource usage
 kubectl top nodes
 kubectl top pods -n taskmaster
+
+# Check logs
+journalctl -u kubelet -f
+journalctl -u containerd -f
 ```
 
 ---
@@ -240,7 +228,7 @@ kubectl top pods -n taskmaster
 ## 🎓 Learning Path
 
 ### Hour 0-1: Setup
-- Install k3s cluster
+- Install kubeadm cluster
 - Deploy baseline application
 - Verify everything works
 
@@ -265,92 +253,6 @@ kubectl top pods -n taskmaster
 
 ---
 
-## 🚀 Features
-
-### Simple Deployment
-- ✅ No manual image building
-- ✅ Images pulled from Docker Hub
-- ✅ One-command installation
-- ✅ Automatic verification
-
-### Beautiful Output
-- ✅ Color-coded terminal output
-- ✅ Progress indicators
-- ✅ Clear error messages
-- ✅ Helpful next-step suggestions
-
-### Production Quality
-- ✅ Comprehensive error handling
-- ✅ Idempotent scripts
-- ✅ Detailed logging
-- ✅ Safe rollback options
-
-### Real Application
-- ✅ Full 3-tier stack
-- ✅ Persistent data
-- ✅ Health monitoring
-- ✅ Production-like setup
-
----
-
-## 📁 Directory Structure
-
-```
-k8s-lab/
-├── README.md                    # This file
-├── QUICKSTART.md                # Quick start guide
-├── IMPLEMENTATION-STATUS.md     # Current status
-│
-├── setup/                       # Cluster installation
-│   ├── 00-install-cluster.sh
-│   ├── verify-cluster.sh
-│   └── README.md
-│
-├── baseline-app/               # 3-tier application
-│   ├── 00-deploy-baseline.sh
-│   ├── verify-baseline.sh
-│   ├── destroy-baseline.sh
-│   └── manifests/             # Kubernetes YAML files
-│
-├── exercises/                 # Break & Fix scenarios
-│   ├── 01-crashloopbackoff/  # ✅ Complete
-│   ├── 02-imagepullbackoff/  # Template ready
-│   └── ... (15 total)
-│
-├── scripts/helpers/           # Utilities
-│   ├── colors.sh
-│   ├── logger.sh
-│   └── validators.sh
-│
-└── docs/                      # Documentation (coming soon)
-```
-
----
-
-## 🧪 Testing
-
-All scripts log to `/tmp/k8s-workshop-<timestamp>.log`
-
-View the latest log:
-
-```bash
-tail -f $(ls -t /tmp/k8s-workshop-*.log | head -1)
-```
-
----
-
-## 🎯 Success Criteria
-
-Your setup is successful when:
-
-- ✅ `kubectl get nodes` shows "Ready"
-- ✅ All pods in "Running" state
-- ✅ Dashboard accessible at http://taskmaster.local
-- ✅ Green status for all services
-- ✅ Can add/delete tasks in UI
-
----
-
 ## 🔄 Cleanup
 
 ### Remove Application Only
@@ -369,34 +271,171 @@ sudo ./uninstall-cluster.sh
 
 ---
 
-## 📊 Current Progress
+## 🎯 Success Criteria
 
-**Phase 1 Complete (40%):**
-- ✅ Directory structure
-- ✅ Helper scripts
-- ✅ Setup scripts (install, verify, uninstall)
-- ✅ Baseline application (frontend, backend, database)
-- ✅ Docker images (published to docker.io/reddydodda)
-- ✅ Exercise 01 (complete template)
+Your setup is successful when:
 
-**Remaining Work:**
-- 🚧 Exercises 02-15 (template ready, needs customization)
-- 🚧 Workshop documentation
-- 🚧 Test suite
-
-**Estimated completion:** 3-4 weeks for remaining exercises and docs
+- ✅ `kubectl get nodes` shows "Ready"
+- ✅ All pods in "Running" state
+- ✅ Dashboard accessible at http://taskmaster.local
+- ✅ Green status for all services
+- ✅ Can add/delete tasks in UI
 
 ---
 
-## 🤝 Contributing
+## 📁 Directory Structure
 
-This workshop is designed for hands-on learning. You can:
+```
+k8s-lab1/
+├── README.md                    # This file
+├── QUICKSTART.md                # Detailed guide
+│
+├── setup/                       # Cluster installation
+│   ├── 00-install-cluster.sh   # kubeadm installer
+│   ├── verify-cluster.sh       # Health checks
+│   ├── uninstall-cluster.sh    # Complete removal
+│   └── README.md
+│
+├── baseline-app/               # 3-tier application
+│   ├── 00-deploy-baseline.sh
+│   ├── verify-baseline.sh
+│   ├── destroy-baseline.sh
+│   └── manifests/             # Kubernetes YAML files
+│
+├── exercises/                 # Break & Fix scenarios
+│   ├── 01-crashloopbackoff/  # ✅ Complete
+│   ├── 02-imagepullbackoff/  # Template ready
+│   └── ... (15 total)
+│
+├── scripts/helpers/           # Utilities
+│   ├── colors.sh
+│   ├── logger.sh
+│   └── validators.sh
+│
+└── docs/                      # Documentation
+```
 
-- Report issues or bugs
-- Suggest improvements
-- Add new exercises
-- Improve documentation
-- Share your experience
+---
+
+## 🧪 Troubleshooting
+
+### Cluster Won't Install
+
+```bash
+# Check system resources
+free -h
+df -h
+nproc
+
+# Check logs
+journalctl -u kubelet -f
+
+# Verify architecture
+uname -m  # Should show: x86_64 or aarch64 (both supported)
+```
+
+### Pods Not Starting
+
+```bash
+# Check pod status
+kubectl get pods -n taskmaster
+
+# Describe pod
+kubectl describe pod <pod-name> -n taskmaster
+
+# Check events
+kubectl get events -n taskmaster --sort-by='.lastTimestamp'
+
+# View logs
+kubectl logs <pod-name> -n taskmaster
+```
+
+### Application Crashes with "exec format error"
+
+**This means the Docker images don't match your architecture.**
+
+```bash
+# Check your architecture
+uname -m  # Should show x86_64 or aarch64
+
+# Verify images support your architecture
+docker manifest inspect docker.io/reddydodda/taskmaster-backend:1.0
+
+# Our images support both x86_64 and ARM64
+```
+
+### Dashboard Not Loading
+
+```bash
+# Check /etc/hosts entry
+cat /etc/hosts | grep taskmaster
+
+# Check ingress
+kubectl get ingress -n taskmaster
+
+# Check services
+kubectl get svc -n taskmaster
+
+# Test connectivity
+curl http://$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].address}')
+```
+
+---
+
+## 📖 Documentation
+
+- **[QUICKSTART.md](QUICKSTART.md)** - Detailed setup guide
+- **[setup/README.md](setup/README.md)** - Cluster installation details
+- **[BUILD-MULTI-ARCH-IMAGES.md](BUILD-MULTI-ARCH-IMAGES.md)** - How multi-arch images were built
+- **[docker-images/README.md](docker-images/README.md)** - Building your own images
+
+---
+
+## 🚀 Features
+
+### Simple Deployment
+- ✅ One-command installation
+- ✅ Images pulled from Docker Hub
+- ✅ Automatic verification
+- ✅ Production-quality scripts
+
+### Beautiful Output
+- ✅ Color-coded terminal output
+- ✅ Progress indicators
+- ✅ Clear error messages
+- ✅ Helpful next-step suggestions
+
+### Real Application
+- ✅ Full 3-tier stack
+- ✅ Persistent data
+- ✅ Health monitoring
+- ✅ Production-like setup
+
+---
+
+## 🎉 Ready to Start?
+
+1. **Verify Requirements:** CentOS/Rocky Linux (x86_64 or ARM64), 4GB RAM, 20GB disk
+2. **Install:** `cd setup && sudo ./00-install-cluster.sh`
+3. **Deploy:** `cd ../baseline-app && ./00-deploy-baseline.sh`
+4. **Learn:** `cd ../exercises/01-crashloopbackoff`
+
+**🚀 Start your Kubernetes journey today!**
+
+The cluster installation takes ~10 minutes.
+The application deploys in ~5 minutes.
+Learning troubleshooting: Priceless! 😊
+
+**Images available at:** https://hub.docker.com/u/reddydodda
+
+---
+
+## 📞 Support
+
+- **Logs:** Check `/tmp/k8s-workshop-*.log`
+- **Verify:** Run `./verify-cluster.sh` or `./verify-baseline.sh`
+- **Architecture Check:** Run `./scripts/check-architecture.sh`
+- **Issues:** See docs/ directory
 
 ---
 
@@ -406,28 +445,4 @@ MIT License - See LICENSE file for details
 
 ---
 
-## 🎉 Ready to Start?
-
-1. **Read:** [QUICKSTART.md](QUICKSTART.md)
-2. **Install:** Follow the quick start guide
-3. **Learn:** Start with Exercise 01
-4. **Master:** Complete all 15 exercises
-
----
-
-## 📞 Support
-
-- **Logs:** Check `/tmp/k8s-workshop-*.log`
-- **Status:** Review `IMPLEMENTATION-STATUS.md`
-- **Setup:** See `setup/README.md`
-- **Design:** Read `files/K8S-WORKSHOP-DESIGN.md`
-
----
-
-**🚀 Start your Kubernetes journey today!**
-
-The cluster installation takes ~10 minutes.
-The application deploys in ~5 minutes.
-Learning troubleshooting: Priceless! 😊
-
-**Images available at:** https://hub.docker.com/u/reddydodda
+**Happy Learning! 🎓**
