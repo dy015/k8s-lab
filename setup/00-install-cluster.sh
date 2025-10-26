@@ -346,8 +346,32 @@ install_metrics_server() {
     log_success "Metrics-server installed"
 }
 
+install_storage_provisioner() {
+    log_step 13 "Installing local-path storage provisioner"
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "[DRY RUN] Would install local-path provisioner"
+        return 0
+    fi
+
+    # Install local-path provisioner (same as k3s default)
+    kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.26/deploy/local-path-storage.yaml
+
+    log_info "Waiting for local-path-provisioner to be ready..."
+    if ! wait_for_condition "local-path-provisioner" \
+        "kubectl get deployment -n local-path-storage local-path-provisioner -o jsonpath='{.status.availableReplicas}' | grep -q '1'" \
+        180 10; then
+        log_warn "local-path-provisioner may not be ready yet"
+    fi
+
+    # Set as default StorageClass
+    kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+    log_success "Local-path storage provisioner installed"
+}
+
 verify_installation() {
-    log_step 13 "Verifying installation"
+    log_step 14 "Verifying installation"
 
     if [[ "${DRY_RUN}" == true ]]; then
         log_info "[DRY RUN] Would verify installation"
@@ -405,6 +429,7 @@ ${BOLD}Important Notes:${NC}
   • This is a single-node cluster (control-plane is untainted)
   • Using containerd as container runtime
   • Using Flannel as CNI plugin
+  • Using local-path storage provisioner for PVCs
   • Ingress controller uses NodePort (access via http://${node_ip}:NodePort)
 
 ${BOLD}Useful Commands:${NC}
@@ -475,6 +500,7 @@ main() {
 
     install_nginx_ingress
     install_metrics_server
+    install_storage_provisioner
 
     log_section "Verification"
 
