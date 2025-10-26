@@ -1,4 +1,8 @@
 #!/bin/bash
+#
+# Alternative installation script using kubeadm instead of k3s
+# For single-node Kubernetes cluster on CentOS/Rocky Linux
+#
 
 set -euo pipefail
 
@@ -9,47 +13,28 @@ source "${HELPERS_DIR}/colors.sh"
 source "${HELPERS_DIR}/logger.sh"
 source "${HELPERS_DIR}/validators.sh"
 
-K3S_VERSION="${K3S_VERSION:-}"
+K8S_VERSION="${K8S_VERSION:-1.28.0}"
+POD_NETWORK_CIDR="10.244.0.0/16"
 SKIP_FIREWALL=false
-SKIP_SELINUX=false
 DRY_RUN=false
-
-cleanup() {
-    if [[ -f /tmp/k3s-install.sh ]]; then
-        rm -f /tmp/k3s-install.sh
-    fi
-}
-
-trap cleanup EXIT
-
-error_handler() {
-    local exit_code=$1
-    local line_number=$2
-    log_error "Installation failed at line ${line_number} with exit code ${exit_code}"
-    log_error "Check the log file for details: ${LOG_FILE}"
-    cleanup
-    exit ${exit_code}
-}
-
-trap 'error_handler $? $LINENO' ERR
 
 show_usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
 
-Install k3s Kubernetes cluster on CentOS/Rocky Linux
+Install Kubernetes cluster using kubeadm on CentOS/Rocky Linux (single-node)
 
 OPTIONS:
-    --k3s-version VERSION    Specify k3s version (default: latest stable)
+    --k8s-version VERSION    Specify Kubernetes version (default: 1.28.0)
+    --pod-cidr CIDR          Pod network CIDR (default: 10.244.0.0/16)
     --skip-firewall          Skip firewall configuration
-    --skip-selinux           Skip SELinux configuration
     --dry-run                Show what would be done without executing
     -h, --help               Show this help message
 
 EXAMPLES:
     sudo $0
-    sudo $0 --k3s-version v1.28.3+k3s1
-    sudo $0 --skip-firewall
+    sudo $0 --k8s-version 1.29.0
+    sudo $0 --pod-cidr 10.244.0.0/16
 
 EOF
 }
@@ -57,16 +42,16 @@ EOF
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --k3s-version)
-                K3S_VERSION="$2"
+            --k8s-version)
+                K8S_VERSION="$2"
+                shift 2
+                ;;
+            --pod-cidr)
+                POD_NETWORK_CIDR="$2"
                 shift 2
                 ;;
             --skip-firewall)
                 SKIP_FIREWALL=true
-                shift
-                ;;
-            --skip-selinux)
-                SKIP_SELINUX=true
                 shift
                 ;;
             --dry-run)
@@ -95,88 +80,96 @@ disable_swap() {
     fi
 
     swapoff -a
+    sed -i.bak '/swap/s/^/#/' /etc/fstab
 
-    if grep -q swap /etc/fstab; then
-        sed -i.bak '/swap/s/^/#/' /etc/fstab
-        log_info "Commented out swap entries in /etc/fstab"
-    fi
-
-    if ! check_swap; then
-        log_error "Failed to disable swap"
-        return 1
-    fi
-
-    log_success "Swap disabled successfully"
+    log_success "Swap disabled"
 }
 
 load_kernel_modules() {
     log_step 2 "Loading required kernel modules"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would load kernel modules: br_netfilter, overlay"
+        log_info "[DRY RUN] Would load kernel modules"
         return 0
     fi
 
-    modprobe br_netfilter
-    modprobe overlay
-
-    cat > /etc/modules-load.d/k3s.conf <<EOF
-br_netfilter
+    cat > /etc/modules-load.d/k8s.conf <<EOF
 overlay
+br_netfilter
 EOF
 
-    log_success "Kernel modules loaded and configured for persistence"
+    modprobe overlay
+    modprobe br_netfilter
+
+    log_success "Kernel modules loaded"
 }
 
 configure_sysctl() {
     log_step 3 "Configuring sysctl settings"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would configure sysctl settings"
+        log_info "[DRY RUN] Would configure sysctl"
         return 0
     fi
 
-    cat > /etc/sysctl.d/k3s.conf <<EOF
-net.bridge.bridge-nf-call-iptables = 1
+    cat > /etc/sysctl.d/k8s.conf <<EOF
+net.bridge.bridge-nf-call-iptables  = 1
 net.bridge.bridge-nf-call-ip6tables = 1
-net.ipv4.ip_forward = 1
+net.ipv4.ip_forward                 = 1
 EOF
 
     sysctl --system >/dev/null
 
-    log_success "Sysctl settings configured"
+    log_success "Sysctl configured"
 }
 
 configure_firewall() {
     if [[ "${SKIP_FIREWALL}" == true ]]; then
-        log_info "Skipping firewall configuration (--skip-firewall)"
+        log_info "Skipping firewall configuration"
         return 0
     fi
 
-    log_step 4 "Configuring firewall"
+    log_step 4 "Configuring firewall for kubeadm"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would configure firewall rules"
+        log_info "[DRY RUN] Would configure firewall"
         return 0
     fi
 
     if ! systemctl is-active --quiet firewalld; then
-        log_warn "firewalld is not running, starting it..."
         systemctl start firewalld
         systemctl enable firewalld
     fi
 
+    # Kubernetes API server
     firewall-cmd --permanent --add-port=6443/tcp
-    firewall-cmd --permanent --add-port=443/tcp
-    firewall-cmd --permanent --add-port=80/tcp
-    firewall-cmd --permanent --add-port=10250/tcp
-    firewall-cmd --permanent --add-port=8472/udp
-    firewall-cmd --permanent --add-port=51820/udp
-    firewall-cmd --permanent --add-port=51821/udp
 
+    # etcd server client API
+    firewall-cmd --permanent --add-port=2379-2380/tcp
+
+    # Kubelet API
+    firewall-cmd --permanent --add-port=10250/tcp
+
+    # kube-scheduler
+    firewall-cmd --permanent --add-port=10259/tcp
+
+    # kube-controller-manager
+    firewall-cmd --permanent --add-port=10257/tcp
+
+    # NodePort Services
+    firewall-cmd --permanent --add-port=30000-32767/tcp
+
+    # Flannel VXLAN
+    firewall-cmd --permanent --add-port=8472/udp
+
+    # HTTP/HTTPS for ingress
+    firewall-cmd --permanent --add-port=80/tcp
+    firewall-cmd --permanent --add-port=443/tcp
+
+    # Pod and Service networks
     if firewall-cmd --get-active-zones | grep -q trusted; then
-        firewall-cmd --permanent --zone=trusted --add-source=10.42.0.0/16
-        firewall-cmd --permanent --zone=trusted --add-source=10.43.0.0/16
+        firewall-cmd --permanent --zone=trusted --add-source=${POD_NETWORK_CIDR}
+        firewall-cmd --permanent --zone=trusted --add-source=10.96.0.0/16
     fi
 
     firewall-cmd --reload
@@ -184,112 +177,160 @@ configure_firewall() {
     log_success "Firewall configured"
 }
 
-configure_selinux() {
-    if [[ "${SKIP_SELINUX}" == true ]]; then
-        log_info "Skipping SELinux configuration (--skip-selinux)"
-        return 0
-    fi
-
-    log_step 5 "Configuring SELinux"
+install_container_runtime() {
+    log_step 5 "Installing containerd"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would set SELinux to permissive"
+        log_info "[DRY RUN] Would install containerd"
         return 0
     fi
 
-    if command_exists getenforce; then
-        local current_mode=$(getenforce)
-        if [[ "${current_mode}" == "Enforcing" ]]; then
-            setenforce 0
-            sed -i 's/^SELINUX=enforcing/SELINUX=permissive/' /etc/selinux/config
-            log_info "SELinux set to permissive mode"
-        else
-            log_info "SELinux is already in ${current_mode} mode"
-        fi
-    else
-        log_warn "SELinux tools not found, skipping"
-    fi
+    # Install containerd
+    yum install -y yum-utils
+    yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    yum install -y containerd.io
 
-    log_success "SELinux configured"
+    # Configure containerd
+    mkdir -p /etc/containerd
+    containerd config default > /etc/containerd/config.toml
+
+    # Enable SystemdCgroup
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+
+    # Start and enable containerd
+    systemctl restart containerd
+    systemctl enable containerd
+
+    log_success "Containerd installed and configured"
 }
 
-install_k3s() {
-    log_step 6 "Installing k3s"
+install_k8s_tools() {
+    log_step 6 "Installing kubeadm, kubelet, and kubectl"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install k3s"
+        log_info "[DRY RUN] Would install Kubernetes tools"
         return 0
     fi
 
-    local install_cmd="curl -sfL https://get.k3s.io"
-    local k3s_args=(
-        "INSTALL_K3S_EXEC=server"
-        "--write-kubeconfig-mode=644"
-        "--disable=traefik"
-        "--disable=servicelb"
-    )
+    # Add Kubernetes repo
+    cat > /etc/yum.repos.d/kubernetes.repo <<EOF
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION%.*}/rpm/
+enabled=1
+gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v${K8S_VERSION%.*}/rpm/repodata/repomd.xml.key
+exclude=kubelet kubeadm kubectl cri-tools kubernetes-cni
+EOF
 
-    if [[ -n "${K3S_VERSION}" ]]; then
-        install_cmd="${install_cmd} | INSTALL_K3S_VERSION=${K3S_VERSION}"
+    # Install tools
+    yum install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+
+    # Enable kubelet
+    systemctl enable kubelet
+
+    log_success "Kubernetes tools installed"
+}
+
+initialize_cluster() {
+    log_step 7 "Initializing Kubernetes cluster"
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "[DRY RUN] Would initialize cluster"
+        return 0
     fi
 
-    log_info "Downloading and installing k3s..."
-    eval "${install_cmd} | sh -s - ${k3s_args[@]}"
+    log_info "Running kubeadm init (this may take several minutes)..."
 
-    log_info "Waiting for k3s to be ready..."
-    if ! wait_for_condition "k3s service to be active" "systemctl is-active k3s" 60 5; then
-        log_error "k3s service failed to start"
-        systemctl status k3s --no-pager
-        return 1
-    fi
+    kubeadm init \
+        --pod-network-cidr=${POD_NETWORK_CIDR} \
+        --apiserver-advertise-address=$(hostname -I | awk '{print $1}') \
+        --kubernetes-version=${K8S_VERSION}
 
-    log_success "k3s installed successfully"
+    log_success "Cluster initialized"
 }
 
 configure_kubectl() {
-    log_step 7 "Configuring kubectl"
+    log_step 8 "Configuring kubectl for current user"
 
     if [[ "${DRY_RUN}" == true ]]; then
         log_info "[DRY RUN] Would configure kubectl"
         return 0
     fi
 
-    mkdir -p ~/.kube
-    cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
-    chmod 600 ~/.kube/config
+    # For root user
+    export KUBECONFIG=/etc/kubernetes/admin.conf
+    echo 'export KUBECONFIG=/etc/kubernetes/admin.conf' >> ~/.bashrc
 
-    export KUBECONFIG=~/.kube/config
-
-    if ! kubectl cluster-info >/dev/null 2>&1; then
-        log_error "kubectl cannot connect to the cluster"
-        return 1
+    # For regular user (if not root)
+    if [[ -n "${SUDO_USER:-}" ]] && [[ "${SUDO_USER}" != "root" ]]; then
+        local user_home=$(eval echo ~${SUDO_USER})
+        sudo -u ${SUDO_USER} mkdir -p ${user_home}/.kube
+        cp /etc/kubernetes/admin.conf ${user_home}/.kube/config
+        chown -R ${SUDO_USER}:${SUDO_USER} ${user_home}/.kube
+        log_info "kubectl configured for user: ${SUDO_USER}"
     fi
 
     log_success "kubectl configured"
 }
 
-install_nginx_ingress() {
-    log_step 8 "Installing nginx ingress controller"
+untaint_control_plane() {
+    log_step 9 "Untainting control-plane for single-node setup"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_info "[DRY RUN] Would install nginx ingress controller"
+        log_info "[DRY RUN] Would untaint control-plane node"
+        return 0
+    fi
+
+    # Allow workloads on control-plane node (single-node setup)
+    kubectl taint nodes --all node-role.kubernetes.io/control-plane- || true
+    kubectl taint nodes --all node-role.kubernetes.io/master- || true
+
+    log_success "Control-plane untainted"
+}
+
+install_cni_plugin() {
+    log_step 10 "Installing Flannel CNI plugin"
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "[DRY RUN] Would install CNI plugin"
+        return 0
+    fi
+
+    kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+
+    log_info "Waiting for CoreDNS to be ready..."
+    if ! wait_for_condition "CoreDNS pods" \
+        "kubectl get pods -n kube-system -l k8s-app=kube-dns -o jsonpath='{.items[*].status.phase}' | grep -q Running" \
+        180 10; then
+        log_warn "CoreDNS may not be ready yet"
+    fi
+
+    log_success "CNI plugin installed"
+}
+
+install_nginx_ingress() {
+    log_step 11 "Installing nginx ingress controller"
+
+    if [[ "${DRY_RUN}" == true ]]; then
+        log_info "[DRY RUN] Would install nginx ingress"
         return 0
     fi
 
     kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/baremetal/deploy.yaml
 
     log_info "Waiting for ingress controller to be ready..."
-    if ! wait_for_condition "ingress-nginx-controller deployment" \
+    if ! wait_for_condition "ingress-nginx-controller" \
         "kubectl get deployment -n ingress-nginx ingress-nginx-controller -o jsonpath='{.status.availableReplicas}' | grep -q '1'" \
         180 10; then
-        log_warn "Ingress controller did not become ready in time, but installation will continue"
+        log_warn "Ingress controller may not be ready yet"
     fi
 
     log_success "Nginx ingress controller installed"
 }
 
 install_metrics_server() {
-    log_step 9 "Installing metrics-server"
+    log_step 12 "Installing metrics-server"
 
     if [[ "${DRY_RUN}" == true ]]; then
         log_info "[DRY RUN] Would install metrics-server"
@@ -298,37 +339,24 @@ install_metrics_server() {
 
     kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
 
+    # Patch for insecure TLS (needed for some environments)
     kubectl patch deployment metrics-server -n kube-system --type='json' \
         -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
-
-    log_info "Waiting for metrics-server to be ready..."
-    if ! wait_for_condition "metrics-server deployment" \
-        "kubectl get deployment -n kube-system metrics-server -o jsonpath='{.status.availableReplicas}' | grep -q '1'" \
-        120 10; then
-        log_warn "Metrics-server did not become ready in time, but installation will continue"
-    fi
 
     log_success "Metrics-server installed"
 }
 
 verify_installation() {
-    log_step 10 "Verifying installation"
+    log_step 13 "Verifying installation"
 
     if [[ "${DRY_RUN}" == true ]]; then
         log_info "[DRY RUN] Would verify installation"
         return 0
     fi
 
-    log_info "Checking k3s service status..."
-    if ! systemctl is-active --quiet k3s; then
-        log_error "k3s service is not running"
-        return 1
-    fi
-    print_status "ok" "k3s service is active"
-
     log_info "Checking node status..."
     if ! kubectl get nodes | grep -q " Ready"; then
-        log_error "Node is not in Ready state"
+        log_error "Node is not Ready"
         return 1
     fi
     print_status "ok" "Node is Ready"
@@ -336,17 +364,12 @@ verify_installation() {
     log_info "Checking system pods..."
     local not_running=$(kubectl get pods -A --no-headers | grep -v "Running\|Completed" | wc -l)
     if [[ $not_running -gt 0 ]]; then
-        log_warn "${not_running} pods are not in Running state"
-        kubectl get pods -A --no-headers | grep -v "Running\|Completed"
+        log_warn "${not_running} pods are not Running yet"
     else
-        print_status "ok" "All system pods are Running"
+        print_status "ok" "All system pods Running"
     fi
 
-    log_info "Testing DNS resolution..."
-    kubectl run test-dns --image=busybox:1.28 --rm -it --restart=Never -- nslookup kubernetes.default >/dev/null 2>&1 || true
-    print_status "ok" "DNS resolution works"
-
-    log_success "Installation verification completed"
+    log_success "Verification completed"
 }
 
 display_access_info() {
@@ -355,19 +378,16 @@ display_access_info() {
     log_section "Installation Complete!"
 
     cat <<EOF
-${GREEN}Kubernetes cluster successfully installed!${NC}
+${GREEN}${BOLD}Kubernetes cluster (kubeadm) successfully installed!${NC}
 
 ${BOLD}Cluster Information:${NC}
-  k3s Version:    $(k3s --version | head -1)
+  Kubernetes:     v${K8S_VERSION}
   Node IP:        ${node_ip}
   API Server:     https://${node_ip}:6443
-
-${BOLD}kubectl Configuration:${NC}
-  Config file:    ~/.kube/config
-  Current context: $(kubectl config current-context 2>/dev/null || echo "N/A")
+  Pod CIDR:       ${POD_NETWORK_CIDR}
 
 ${BOLD}Cluster Status:${NC}
-$(kubectl get nodes)
+$(kubectl get nodes -o wide)
 
 ${BOLD}System Pods:${NC}
 $(kubectl get pods -A)
@@ -381,10 +401,16 @@ ${BOLD}Next Steps:${NC}
      ${CYAN}cd ../setup${NC}
      ${CYAN}./verify-cluster.sh${NC}
 
+${BOLD}Important Notes:${NC}
+  • This is a single-node cluster (control-plane is untainted)
+  • Using containerd as container runtime
+  • Using Flannel as CNI plugin
+  • Ingress controller uses NodePort (access via http://${node_ip}:NodePort)
+
 ${BOLD}Useful Commands:${NC}
-  • Check cluster info: ${CYAN}kubectl cluster-info${NC}
-  • View all resources: ${CYAN}kubectl get all -A${NC}
-  • Check node status:  ${CYAN}kubectl get nodes -o wide${NC}
+  • Cluster info:  ${CYAN}kubectl cluster-info${NC}
+  • All resources: ${CYAN}kubectl get all -A${NC}
+  • Node details:  ${CYAN}kubectl describe node$(hostname)${NC}
 
 ${BOLD}Log File:${NC} ${LOG_FILE}
 
@@ -396,12 +422,11 @@ main() {
 
     parse_args "$@"
 
-    log_section "Kubernetes Cluster Installation"
-
-    log_info "Starting k3s installation on CentOS/Rocky Linux"
+    log_section "Kubernetes Installation with kubeadm"
+    log_info "Installing single-node cluster on CentOS/Rocky Linux"
 
     if [[ "${DRY_RUN}" == true ]]; then
-        log_warn "Running in DRY RUN mode - no changes will be made"
+        log_warn "Running in DRY RUN mode"
     fi
 
     if ! check_root; then
@@ -417,21 +442,13 @@ main() {
     fi
 
     if ! check_resources 4 20 2; then
-        log_error "System does not meet minimum requirements"
+        log_error "Insufficient resources"
         exit 1
     fi
 
     if check_k8s_installed; then
-        if ! confirm "Kubernetes is already installed. Continue anyway?"; then
-            log_info "Installation cancelled by user"
+        if ! confirm "Kubernetes already installed. Continue?"; then
             exit 0
-        fi
-    fi
-
-    if ! check_internet; then
-        log_warn "No internet connectivity detected. Installation may fail."
-        if ! confirm "Continue without internet connection?"; then
-            exit 1
         fi
     fi
 
@@ -441,12 +458,21 @@ main() {
     load_kernel_modules
     configure_sysctl
     configure_firewall
-    configure_selinux
 
-    log_section "Installing Kubernetes"
+    log_section "Installing Container Runtime and Kubernetes"
 
-    install_k3s
+    install_container_runtime
+    install_k8s_tools
+
+    log_section "Initializing Cluster"
+
+    initialize_cluster
     configure_kubectl
+    untaint_control_plane
+    install_cni_plugin
+
+    log_section "Installing Add-ons"
+
     install_nginx_ingress
     install_metrics_server
 
@@ -456,7 +482,7 @@ main() {
 
     display_access_info
 
-    log_success "k3s cluster installation completed successfully!"
+    log_success "kubeadm cluster installation completed!"
 }
 
 main "$@"
