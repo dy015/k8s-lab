@@ -29,9 +29,10 @@ sudo ./00-install-cluster.sh [OPTIONS]
 **Options:**
 - `--k8s-version VERSION` - Specify Kubernetes version (default: 1.28.0)
 - `--pod-cidr CIDR` - Pod network CIDR (default: 10.244.0.0/16)
+- `--interface IFACE` - Network interface to use (e.g., eth1, eth2) - **Recommended for multi-interface setups**
 - `--api-server-ip IP` - API server advertise IP (default: auto-detect)
-- `--skip-firewall` - Skip firewall configuration
-- `--skip-selinux` - Skip SELinux configuration
+- `--enable-firewall` - Enable and configure firewall (for production)
+- `--skip-firewall` - Skip firewall configuration (leave as-is)
 - `--dry-run` - Show what would be done without executing
 - `-h, --help` - Show help message
 
@@ -57,17 +58,20 @@ sudo ./00-install-cluster.sh [OPTIONS]
 # Install with defaults (firewall disabled for lab environment)
 sudo ./00-install-cluster.sh
 
-# Install with specific Kubernetes version
-sudo ./00-install-cluster.sh --k8s-version 1.28.0
+# Install using specific network interface (RECOMMENDED for multi-interface)
+sudo ./00-install-cluster.sh --interface eth1
 
-# Install with custom API server IP (for multiple interfaces)
+# Install with specific Kubernetes version
+sudo ./00-install-cluster.sh --k8s-version 1.28.0 --interface eth1
+
+# Install with custom API server IP (old way, still works)
 sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
 
 # Install with firewall enabled (for production)
-sudo ./00-install-cluster.sh --enable-firewall
+sudo ./00-install-cluster.sh --interface eth1 --enable-firewall
 
 # Dry run to see what would be done
-sudo ./00-install-cluster.sh --dry-run
+sudo ./00-install-cluster.sh --interface eth1 --dry-run
 ```
 
 **Installation Time:** 5-10 minutes

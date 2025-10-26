@@ -287,7 +287,7 @@ Hour 8-10:  Review and practice
 ## Getting Help
 
 - **Check logs:** `/tmp/k8s-workshop-*.log`
-- **Review docs:** `README.md`, `IMPLEMENTATION-STATUS.md`
+- **Review docs:** `README.md`, `setup/README.md`, `docker-images/README.md`
 - **Verify setup:** Run verify scripts in each directory
 - **Reset if needed:** Use `./reset.sh` in exercises
 
@@ -307,6 +307,6 @@ Hour 8-10:  Review and practice
 
 For detailed information, see:
 - `README.md` - Complete workshop guide
-- `IMPLEMENTATION-STATUS.md` - Current status
 - `setup/README.md` - Setup details
+- `docker-images/README.md` - Multi-arch images info
 - `exercises/*/README.md` - Exercise guides

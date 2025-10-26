@@ -41,11 +41,14 @@ A hands-on workshop where you deploy a working 3-tier application, then systemat
 cd setup
 sudo ./00-install-cluster.sh  # Firewall disabled by default (lab environment)
 
-# Or with custom IP (for multiple network interfaces):
+# For multiple network interfaces, specify which interface to use:
+# sudo ./00-install-cluster.sh --interface eth1  # Recommended!
+
+# Or specify IP directly (old way, still works):
 # sudo ./00-install-cluster.sh --api-server-ip 192.168.1.100
 
 # For production with firewall enabled:
-# sudo ./00-install-cluster.sh --enable-firewall
+# sudo ./00-install-cluster.sh --interface eth1 --enable-firewall
 
 ./verify-cluster.sh
 ```
@@ -174,7 +177,7 @@ cat README.md
 - **Disk:** 40 GB
 
 ### ✅ Multi-Architecture Support
-**ARM64 SUPPORTED:** Docker images are built for both x86_64 and ARM64 architectures. The images will automatically pull the correct version for your system. See `BUILD-MULTI-ARCH-IMAGES.md` for details.
+**ARM64 SUPPORTED:** Docker images are built for both x86_64 and ARM64 architectures. The images will automatically pull the correct version for your system. See `docker-images/README.md` for details.
 
 ---
 
@@ -395,8 +398,7 @@ curl http://$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[0].addr
 
 - **[QUICKSTART.md](QUICKSTART.md)** - Detailed setup guide
 - **[setup/README.md](setup/README.md)** - Cluster installation details
-- **[BUILD-MULTI-ARCH-IMAGES.md](BUILD-MULTI-ARCH-IMAGES.md)** - How multi-arch images were built
-- **[docker-images/README.md](docker-images/README.md)** - Building your own images
+- **[docker-images/README.md](docker-images/README.md)** - Multi-arch images and building your own
 
 ---
 
