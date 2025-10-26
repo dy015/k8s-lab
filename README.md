@@ -49,6 +49,7 @@ sudo ./00-install-cluster.sh
 - Flannel CNI plugin
 - nginx-ingress controller
 - metrics-server
+- local-path storage provisioner (for PVCs)
 
 ### Step 2: Deploy Application (3-5 min)
 
@@ -123,6 +124,7 @@ cat README.md
 - **CNI:** Flannel
 - **Ingress:** nginx-ingress
 - **Metrics:** metrics-server
+- **Storage:** local-path provisioner
 
 ---
 

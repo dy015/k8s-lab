@@ -1,6 +1,6 @@
 # Setup - Kubernetes Cluster Installation
 
-This directory contains scripts to install, verify, and manage a k3s Kubernetes cluster on CentOS/Rocky Linux.
+This directory contains scripts to install, verify, and manage a kubeadm Kubernetes cluster on CentOS/Rocky Linux.
 
 ## Quick Start
 
@@ -19,7 +19,7 @@ sudo ./uninstall-cluster.sh
 
 ### 00-install-cluster.sh
 
-Installs k3s Kubernetes cluster with all required components.
+Installs kubeadm Kubernetes cluster with all required components.
 
 **Usage:**
 ```bash
@@ -27,7 +27,7 @@ sudo ./00-install-cluster.sh [OPTIONS]
 ```
 
 **Options:**
-- `--k3s-version VERSION` - Specify k3s version (default: latest stable)
+- `--k8s-version VERSION` - Specify Kubernetes version (default: 1.28.0)
 - `--skip-firewall` - Skip firewall configuration
 - `--skip-selinux` - Skip SELinux configuration
 - `--dry-run` - Show what would be done without executing
@@ -40,19 +40,23 @@ sudo ./00-install-cluster.sh [OPTIONS]
 4. Configures sysctl settings for Kubernetes
 5. Configures firewall rules (firewalld)
 6. Sets SELinux to permissive mode
-7. Installs k3s
-8. Configures kubectl
-9. Installs nginx-ingress-controller
-10. Installs metrics-server
-11. Verifies installation
+7. Installs container runtime (containerd)
+8. Installs kubeadm, kubelet, kubectl
+9. Initializes Kubernetes cluster
+10. Configures kubectl
+11. Installs Flannel CNI
+12. Installs nginx-ingress-controller
+13. Installs metrics-server
+14. Installs local-path storage provisioner (for PVCs)
+15. Verifies installation
 
 **Examples:**
 ```bash
 # Install with defaults
 sudo ./00-install-cluster.sh
 
-# Install specific k3s version
-sudo ./00-install-cluster.sh --k3s-version v1.28.3+k3s1
+# Install specific Kubernetes version
+sudo ./00-install-cluster.sh --k8s-version 1.28.0
 
 # Dry run to see what would be done
 sudo ./00-install-cluster.sh --dry-run
@@ -75,12 +79,15 @@ Verifies that the Kubernetes cluster is healthy and all components are running.
 ```
 
 **What it checks:**
-- k3s service status
+- kubelet service status
+- containerd service status
 - kubectl connectivity
 - Node Ready status
+- Control plane pods (kube-apiserver, kube-scheduler, kube-controller-manager, etcd)
 - System pods (kube-system namespace)
 - CoreDNS functionality
 - DNS resolution
+- Flannel CNI
 - Ingress controller
 - Metrics-server
 - Storage class availability
@@ -94,7 +101,7 @@ Verifies that the Kubernetes cluster is healthy and all components are running.
 
 ### uninstall-cluster.sh
 
-Completely removes k3s and all cluster resources.
+Completely removes kubeadm cluster and all cluster resources.
 
 **Usage:**
 ```bash
@@ -106,10 +113,12 @@ sudo ./uninstall-cluster.sh [OPTIONS]
 - `-h, --help` - Show help message
 
 **What it removes:**
-- k3s service and binaries
+- kubeadm, kubelet, kubectl packages
+- containerd container runtime
 - All containers and images
-- All persistent data (/var/lib/rancher)
+- All persistent data (/var/lib/kubelet, /etc/kubernetes, /var/lib/etcd)
 - kubectl configuration
+- CNI configurations
 - Network configurations
 - Firewall rules
 - System configurations (kernel modules, sysctl)
@@ -179,17 +188,17 @@ sudo ./configure-selinux.sh [OPTIONS]
 - `--status` - Show current SELinux status
 - `-h, --help` - Show help message
 
-**Note:** k3s works best with SELinux in permissive mode.
+**Note:** Kubernetes works best with SELinux in permissive mode.
 
 **Examples:**
 ```bash
-# Set to permissive (recommended for k3s)
+# Set to permissive (recommended for Kubernetes)
 sudo ./configure-selinux.sh --permissive
 
 # Check SELinux status
 sudo ./configure-selinux.sh --status
 
-# Set to enforcing (may cause issues with k3s)
+# Set to enforcing (may cause issues with Kubernetes)
 sudo ./configure-selinux.sh --enforcing
 ```
 
@@ -213,7 +222,7 @@ sudo ./configure-selinux.sh --enforcing
 
 - Root or sudo access
 - CentOS/Rocky Linux operating system
-- Internet connectivity (for downloading k3s and images)
+- Internet connectivity (for downloading packages and images)
 - Firewalld installed (for firewall configuration)
 
 ## Installation Flow
@@ -237,27 +246,36 @@ sudo ./configure-selinux.sh --enforcing
 └────────────────┬────────────────────────┘
                  │
 ┌────────────────▼────────────────────────┐
-│  3. k3s Installation                    │
-│     - Download k3s installer            │
-│     - Install k3s service               │
-│     - Start k3s                         │
+│  3. Container Runtime Installation      │
+│     - Install containerd                │
+│     - Configure containerd              │
+│     - Start containerd service          │
 └────────────────┬────────────────────────┘
                  │
 ┌────────────────▼────────────────────────┐
-│  4. kubectl Configuration               │
+│  4. Kubernetes Installation             │
+│     - Add Kubernetes repo               │
+│     - Install kubeadm, kubelet, kubectl │
+│     - Start kubelet service             │
+│     - Initialize cluster (kubeadm init) │
+│     - Install Flannel CNI               │
+└────────────────┬────────────────────────┘
+                 │
+┌────────────────▼────────────────────────┐
+│  5. kubectl Configuration               │
 │     - Copy kubeconfig                   │
 │     - Set permissions                   │
 │     - Verify connectivity               │
 └────────────────┬────────────────────────┘
                  │
 ┌────────────────▼────────────────────────┐
-│  5. Add-ons Installation                │
+│  6. Add-ons Installation                │
 │     - nginx-ingress-controller          │
 │     - metrics-server                    │
 └────────────────┬────────────────────────┘
                  │
 ┌────────────────▼────────────────────────┐
-│  6. Verification                        │
+│  7. Verification                        │
 │     - Service status                    │
 │     - Node status                       │
 │     - Pod status                        │
@@ -280,16 +298,19 @@ df -h
 nproc
 ```
 
-**Problem:** k3s service won't start
+**Problem:** kubelet service won't start
 ```bash
 # Check service status
-systemctl status k3s
+systemctl status kubelet
 
 # View logs
-journalctl -u k3s -f
+journalctl -u kubelet -f
 
 # Check if swap is still enabled
 swapon --show
+
+# Check containerd
+systemctl status containerd
 ```
 
 **Problem:** Firewall is blocking traffic
@@ -375,8 +396,9 @@ After successful cluster installation:
 
 ## Additional Resources
 
-- [k3s Documentation](https://docs.k3s.io/)
+- [kubeadm Documentation](https://kubernetes.io/docs/setup/production-environment/tools/kubeadm/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [containerd Documentation](https://containerd.io/)
 - [Workshop Documentation](../docs/)
 
 ## Support

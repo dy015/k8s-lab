@@ -19,8 +19,10 @@ sudo ./00-install-cluster.sh
 ```
 
 **What this does:**
-- Installs k3s (lightweight Kubernetes)
+- Installs kubeadm Kubernetes cluster
+- Installs containerd container runtime
 - Configures firewall and SELinux
+- Installs Flannel CNI
 - Installs nginx-ingress and metrics-server
 - Sets up kubectl
 
@@ -195,7 +197,8 @@ df -h
 swapon --show
 
 # View logs
-sudo journalctl -u k3s -f
+sudo journalctl -u kubelet -f
+sudo journalctl -u containerd -f
 ```
 
 ### Issue: Pods not starting
