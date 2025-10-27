@@ -38,6 +38,7 @@ sudo ./00-install-cluster.sh --interface <interface_name>
 - Firewall is DISABLED automatically (lab environment)
 - SELinux is set to PERMISSIVE mode automatically
 - Interface MUST have an IP address configured
+- nginx-ingress is configured to use hostNetwork (listens on port 80/443 directly)
 
 **What it does:**
 1. Validates system requirements (4GB RAM, 20GB disk, 2 CPU cores)
@@ -367,6 +368,20 @@ kubectl get pods -n ingress-nginx
 
 # Check ingress controller logs
 kubectl logs -n ingress-nginx -l app.kubernetes.io/component=controller
+
+# Run diagnostics (from repository root)
+./troubleshoot-ingress.sh
+
+# Fix port 80 access if needed (from repository root)
+./fix-ingress-port80.sh
+```
+
+**Problem:** Can't access application on port 80
+```bash
+# The installation script configures nginx-ingress to use hostNetwork by default
+# If you installed before this fix, you can apply it manually:
+cd /path/to/k8s-lab1
+sudo ./fix-ingress-port80.sh
 ```
 
 ## Logs
