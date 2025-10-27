@@ -234,28 +234,17 @@ configure_kubelet_node_ip() {
 
     log_info "Setting kubelet node IP to: ${NODE_IP} (from interface: ${INTERFACE})"
 
-    # Create kubelet drop-in configuration
-    mkdir -p /etc/systemd/system/kubelet.service.d
-    cat > /etc/systemd/system/kubelet.service.d/20-node-ip.conf <<EOF
-[Service]
-Environment="KUBELET_EXTRA_ARGS=--node-ip=${NODE_IP}"
+    # For RPM-based systems (CentOS/Rocky), use /etc/sysconfig/kubelet
+    # This is the official way per Kubernetes documentation
+    cat > /etc/sysconfig/kubelet <<EOF
+KUBELET_EXTRA_ARGS=--node-ip=${NODE_IP}
 EOF
 
-    # Also add to kubelet default config
-    mkdir -p /var/lib/kubelet
-    cat > /var/lib/kubelet/config.yaml <<EOF
-apiVersion: kubelet.config.k8s.io/v1beta1
-kind: KubeletConfiguration
-address: ${NODE_IP}
-EOF
-
-    # Reload systemd
-    systemctl daemon-reload
-
-    # Enable kubelet
+    # Enable kubelet (will start after kubeadm init)
     systemctl enable kubelet
 
     log_success "Kubelet configured with node IP: ${NODE_IP}"
+    log_info "Configuration written to: /etc/sysconfig/kubelet"
 }
 
 initialize_cluster() {
@@ -268,7 +257,6 @@ initialize_cluster() {
     kubeadm init \
         --pod-network-cidr=${POD_NETWORK_CIDR} \
         --apiserver-advertise-address=${NODE_IP} \
-        --node-ip=${NODE_IP} \
         --kubernetes-version=${K8S_VERSION}
 
     log_success "Cluster initialized"
@@ -389,6 +377,9 @@ ${BOLD}Verify Node IP:${NC}
   ${CYAN}kubectl get nodes -o wide${NC}
   ${CYAN}# INTERNAL-IP should show: ${NODE_IP}${NC}
 
+  ${CYAN}cat /etc/sysconfig/kubelet${NC}
+  ${CYAN}# Should show: KUBELET_EXTRA_ARGS=--node-ip=${NODE_IP}${NC}
+
 ${BOLD}Next Steps:${NC}
   1. Deploy the baseline application:
      ${CYAN}cd ../baseline-app${NC}
@@ -401,7 +392,8 @@ ${BOLD}Next Steps:${NC}
 ${BOLD}Important Notes:${NC}
   • Firewall is DISABLED (lab environment)
   • SELinux is set to PERMISSIVE mode
-  • Node IP is configured from interface: ${INTERFACE}
+  • Node IP configured via /etc/sysconfig/kubelet
+  • Interface used: ${INTERFACE}
   • Single-node cluster (control-plane is untainted)
 
 ${BOLD}Useful Commands:${NC}
