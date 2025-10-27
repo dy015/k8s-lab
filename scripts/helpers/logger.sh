@@ -29,7 +29,7 @@ log_to_file() {
 # Info message
 log_info() {
     local message="$*"
-    echo -e "${GREEN}[INFO]${NC} $(get_timestamp) - ${message}"
+    echo -e "${GREEN}[INFO]${NC} $(get_timestamp) - ${message}" >&2
     log_to_file "INFO: ${message}"
 }
 
@@ -43,14 +43,14 @@ log_error() {
 # Warning message
 log_warn() {
     local message="$*"
-    echo -e "${YELLOW}[WARN]${NC} $(get_timestamp) - ${message}"
+    echo -e "${YELLOW}[WARN]${NC} $(get_timestamp) - ${message}" >&2
     log_to_file "WARN: ${message}"
 }
 
 # Success message
 log_success() {
     local message="$*"
-    echo -e "${GREEN}[SUCCESS]${NC} $(get_timestamp) - ${message}"
+    echo -e "${GREEN}[SUCCESS]${NC} $(get_timestamp) - ${message}" >&2
     log_to_file "SUCCESS: ${message}"
 }
 
@@ -58,7 +58,7 @@ log_success() {
 log_debug() {
     if [[ "${LOG_LEVEL}" == "DEBUG" ]]; then
         local message="$*"
-        echo -e "${CYAN}[DEBUG]${NC} $(get_timestamp) - ${message}"
+        echo -e "${CYAN}[DEBUG]${NC} $(get_timestamp) - ${message}" >&2
         log_to_file "DEBUG: ${message}"
     fi
 }
@@ -68,24 +68,24 @@ log_step() {
     local step_num=$1
     shift
     local message="$*"
-    echo -e "${BLUE}[STEP ${step_num}]${NC} ${message}"
+    echo -e "${BLUE}[STEP ${step_num}]${NC} ${message}" >&2
     log_to_file "STEP ${step_num}: ${message}"
 }
 
 # Section header
 log_section() {
     local section="$*"
-    echo
-    echo -e "${BOLD}${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${BOLD}${CYAN}║${NC} ${BOLD}${section}${NC}"
-    echo -e "${BOLD}${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}"
-    echo
+    echo >&2
+    echo -e "${BOLD}${CYAN}╔════════════════════════════════════════════════════════════════╗${NC}" >&2
+    echo -e "${BOLD}${CYAN}║${NC} ${BOLD}${section}${NC}" >&2
+    echo -e "${BOLD}${CYAN}╚════════════════════════════════════════════════════════════════╝${NC}" >&2
+    echo >&2
     log_to_file "SECTION: ${section}"
 }
 
 # Separator line
 log_separator() {
-    echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}" >&2
 }
 
 # Spinner function
@@ -138,19 +138,19 @@ print_status() {
 
     case "${status}" in
         "ok"|"success"|"pass")
-            echo -e "${CHECK_MARK} ${GREEN}${message}${NC}"
+            echo -e "${CHECK_MARK} ${GREEN}${message}${NC}" >&2
             ;;
         "fail"|"error"|"failed")
-            echo -e "${CROSS_MARK} ${RED}${message}${NC}"
+            echo -e "${CROSS_MARK} ${RED}${message}${NC}" >&2
             ;;
         "warn"|"warning")
-            echo -e "${WARNING_SIGN} ${YELLOW}${message}${NC}"
+            echo -e "${WARNING_SIGN} ${YELLOW}${message}${NC}" >&2
             ;;
         "info")
-            echo -e "${INFO_SIGN} ${BLUE}${message}${NC}"
+            echo -e "${INFO_SIGN} ${BLUE}${message}${NC}" >&2
             ;;
         *)
-            echo -e "${BULLET} ${message}"
+            echo -e "${BULLET} ${message}" >&2
             ;;
     esac
 }
@@ -161,12 +161,12 @@ log_summary() {
     shift
     local items=("$@")
 
-    echo
-    echo -e "${BOLD}${WHITE}${title}${NC}"
+    echo >&2
+    echo -e "${BOLD}${WHITE}${title}${NC}" >&2
     log_separator
     for item in "${items[@]}"; do
-        echo -e "  ${BULLET} ${item}"
+        echo -e "  ${BULLET} ${item}" >&2
     done
     log_separator
-    echo
+    echo >&2
 }
