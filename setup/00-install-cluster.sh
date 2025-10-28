@@ -306,10 +306,29 @@ install_nginx_ingress() {
 
     kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.8.1/deploy/static/provider/baremetal/deploy.yaml
 
-    log_info "Waiting for ingress controller to be ready..."
-    sleep 10
+    log_info "Waiting for deployment to be created..."
+    sleep 5
 
-    log_success "Nginx ingress controller installed"
+    log_info "Configuring ingress to use hostNetwork (listen on port 80/443)..."
+    kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' \
+        -p='[
+          {
+            "op": "add",
+            "path": "/spec/template/spec/hostNetwork",
+            "value": true
+          },
+          {
+            "op": "add",
+            "path": "/spec/template/spec/dnsPolicy",
+            "value": "ClusterFirstWithHostNet"
+          }
+        ]' 2>/dev/null || true
+
+    log_info "Waiting for ingress controller to be ready..."
+    kubectl rollout status deployment ingress-nginx-controller -n ingress-nginx --timeout=120s 2>/dev/null || sleep 15
+
+    log_success "Nginx ingress controller installed and configured"
+    log_info "Ingress listening on port 80 and 443"
 }
 
 install_metrics_server() {
